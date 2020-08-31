@@ -654,6 +654,7 @@ out:
 }
 
 static void queue_wait_work(struct nova_inode_info *ino_info)
+
 {
     unsigned long wkbit, size;
     struct super_block *sb = ino_info->vfs_inode.i_sb;
@@ -689,8 +690,11 @@ static void queue_wait_work(struct nova_inode_info *ino_info)
             async_pos = async_pos->next;
     }
 }
+
+
 ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
 {
+    
     struct file *filp = iocb->ki_filp;
     struct inode *inode = filp->f_mapping->host;
     struct iovec *iv = iter->iov;
@@ -711,31 +715,32 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
         iv++;
     }
     iv = iter->iov;
+    nova_info("iocb->pos: %ld, iter->iov_offset: %ld, end : %ld",iocb->ki_pos,iter->iov_offset,end);
 
     if (!is_sync_kiocb(iocb))
     {
         spin_lock(&ino_info->aio.wt_bitmap_lock);
         spin_lock(&ino_info->aio.wk_bitmap_lock);
-        nova_dbg("async!\n");
+        nova_info("async!\n");
 
         if (!sb->s_dio_done_wq)
             ret = sb_init_wq(sb);
 
-        // fix me ,if iov_offset is very big ,we use too many mem for bitmap
-        size = iocb->ki_pos + end;
+        // fix me ,if ki_pos is very big ,we use too many mem for bitmap
+        size =  end;
         if (size < inode->i_bytes)
             size = inode->i_bytes;
 
         //async bitmap init
         unsigned long sub_blk_num = (size - 1) >> sb->s_blocksize_bits + 1;
-        nova_dbg("nova: sub_blk_num : %lu,inode.i_bytes : %u,sb.s_blocksize_bits : %c , size %u\n", __func__, sub_blk_num, inode->i_bytes, sb->s_blocksize, size);
+        nova_info("nova: sub_blk_num : %lu,inode.i_bytes : %u,sb.s_blocksize_bits : %d , size %u\n",sub_blk_num, inode->i_bytes, sb->s_blocksize, size);
 
         if (!ino_info->aio.wait_bitmap)
         {
             ino_info->aio.wait_bitmap = kzalloc(BITS_TO_LONGS(sub_blk_num) * sizeof(long), GFP_KERNEL);
             ino_info->aio.work_bitmap = kzalloc(BITS_TO_LONGS(sub_blk_num) * sizeof(long), GFP_KERNEL);
             ino_info->aio.bitmap_size = BITS_TO_LONGS(sub_blk_num) * sizeof(long);
-            nova_dbg("alloc bitmap ino_info->aio.bitmap_size=%d\n", ino_info->aio.bitmap_size);
+            nova_info("alloc bitmap ino_info->aio.bitmap_size=%d\n", ino_info->aio.bitmap_size);
         }
         else
         {
@@ -750,7 +755,7 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
                 kfree(ino_info->aio.work_bitmap);
                 ino_info->aio.work_bitmap = tmp;
                 ino_info->aio.bitmap_size = BITS_TO_LONGS(sub_blk_num) * sizeof(long);
-                nova_dbg("realloc bitmap ino_info->aio.bitmap_size=%d\n", ino_info->aio.bitmap_size);
+                nova_info("realloc bitmap ino_info->aio.bitmap_size=%d\n", ino_info->aio.bitmap_size);
             }
         }
 
@@ -759,6 +764,7 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
             kfree(ino_info->aio.wait_bitmap);
             kfree(ino_info->aio.work_bitmap);
             ino_info->aio.bitmap_size = 0;
+            nova_info("ino_info->aio.wait_bitmap if free and exit,notice we don't unlock_spinlock!\n");
             return -ENOMEM;
         }
 
@@ -784,7 +790,7 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
             INIT_LIST_HEAD(&io_work->aio_waitq);
             INIT_LIST_HEAD(&io_work->aio_conflicq);
 
-            nova_dbg("nova  :init io_work %d iov_base %p, iov_len %lu,ki_pos %llu", seg, io_work->my_iov.iov_base, io_work->my_iov.iov_len, io_work->ki_pos);
+            nova_info("nova  :init io_work %d iov_base %p, iov_len %lu,ki_pos %llu\n", seg, io_work->my_iov.iov_base, io_work->my_iov.iov_len, io_work->ki_pos);
             iv++;
             seg++;
 
