@@ -41,7 +41,6 @@ void nova_init_aio_struct(struct nova_inode_info_header *sih){
 	ino_info->aio.bitmap_size = 0;
 	INIT_LIST_HEAD(&ino_info->aio.i_waitque);
 	spin_lock_init(&ino_info->aio.wk_bitmap_lock);
-	spin_lock_init(&ino_info->aio.wk_bitmap_lock);
 }
 
 void nova_init_header(struct super_block *sb,

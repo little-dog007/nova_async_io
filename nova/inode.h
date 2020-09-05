@@ -7,6 +7,7 @@ struct nova_inode;
 #include "super.h"
 #include "log.h"
 
+
 enum nova_new_inode_type {
 	TYPE_CREATE = 0,
 	TYPE_MKNOD,
@@ -125,12 +126,11 @@ struct aio_struct{
 	unsigned long bitmap_size;
 	struct list_head i_waitque;
 	spinlock_t wk_bitmap_lock;//work_bitmap lock
-	spinlock_t wt_bitmap_lock;// wait_bitmap lock
 };
 
 struct async_work_struct{
 	loff_t	ki_pos;
-	struct iov_iter *iter;
+	struct iov_iter iter;
 	struct iovec my_iov; 
 	struct kiocb *a_iocb;
 	struct pinned_page *p;
@@ -138,6 +138,8 @@ struct async_work_struct{
 	struct task_struct *tsk;
 	struct list_head aio_waitq;
 	struct list_head aio_conflicq;
+	/*for multiple buffers,use this field to call a_work->a_iocb->ki_complete once*/
+	unsigned long *nr_segs; 
 	unsigned long first_blk;
 	unsigned long blknr;
 	bool isQue;

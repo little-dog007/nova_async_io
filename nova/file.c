@@ -960,7 +960,9 @@ const struct file_operations nova_dax_file_operations = {
 	.llseek = nova_llseek,
 	.read = nova_dax_file_read,
 	.write = nova_dax_file_write,
-	.read_iter = nova_dax_read_iter,
+	//.read_iter = nova_dax_read_iter,
+	.read_iter = generic_file_read_iter,
+	
 	.write_iter = nova_dax_write_iter,
 	.mmap = nova_dax_file_mmap,
 	.open = nova_open,
