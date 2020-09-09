@@ -1139,17 +1139,17 @@ struct inode *nova_new_vfs_inode(enum nova_new_inode_type type,
 	pi->create_epoch_id = epoch_id;
 	nova_init_inode(inode, pi);
 
-	struct nova_inode_info *ino_info,*ino_info2=NULL;
-	ino_info2 = NOVA_I(inode);
-	ino_info = container_of(inode, struct nova_inode_info, vfs_inode);
-	long x = (long)ino_info - (long)inode;
-	nova_info("nova_inode_info size: %lu ,nova_inode_info_header size:%lu , aio_struct size:%lu\n,inode size:%lu",
-                sizeof(struct nova_inode_info),
-                sizeof(struct nova_inode_info_header),
-                sizeof(struct aio_struct),
-                sizeof(struct inode));
-    nova_info("address: inode* %p , ino_info* %p ,ino_info2* %p,ino_info-inode : %ld\n",inode,ino_info,ino_info2,x);
-	nova_info("inode %lu",inode->i_ino);
+	// struct nova_inode_info *ino_info,*ino_info2=NULL;
+	// ino_info2 = NOVA_I(inode);
+	// ino_info = container_of(inode, struct nova_inode_info, vfs_inode);
+	// long x = (long)ino_info - (long)inode;
+	// nova_info("nova_inode_info size: %lu ,nova_inode_info_header size:%lu , aio_struct size:%lu\n,inode size:%lu",
+    //             sizeof(struct nova_inode_info),
+    //             sizeof(struct nova_inode_info_header),
+    //             sizeof(struct aio_struct),
+    //             sizeof(struct inode));
+    // nova_info("address: inode* %p , ino_info* %p ,ino_info2* %p,ino_info-inode : %ld\n",inode,ino_info,ino_info2,x);
+	// nova_info("inode %lu",inode->i_ino);
 
 	if (metadata_csum) {
 		alter_pi = (struct nova_inode *)nova_get_block(sb,

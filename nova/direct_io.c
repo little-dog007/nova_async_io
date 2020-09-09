@@ -210,7 +210,7 @@ ssize_t do_nova_inplace_file_write_async(struct file *filp, struct page **kaddr,
             */
             if (!update_log)
             {
-                spin_unlock(&inode->i_lock);
+                spin_lock(&inode->i_lock);
                 update_log = true;
             }
 
@@ -553,7 +553,7 @@ void nova_async_work(struct work_struct *p_work)
     int n_page;
 
     if(!access_ok(iv->iov_base,iv->iov_len)){
-        return ;
+        return ; /*fix here*/
     }
 
     addr = (unsigned long)iv->iov_base;
@@ -580,10 +580,13 @@ void nova_async_work(struct work_struct *p_work)
     
     if (iov_iter_rw(&a_work->iter) == READ)
     {
-       
+       /*we need to hold a lock*/
+       // inode_lock_shared(inode);
         ret = nova_dax_file_read_async(filp, pp->kaddr,
                                        a_work->my_iov.iov_len,
                                        a_work->ki_pos);
+
+        // inode_unlock_shared(inode);
         if (ret < 0)
             goto out;
         
@@ -685,11 +688,13 @@ static void queue_wait_work(struct nova_inode_info *ino_info)
         if (wkbit >= size)
         {
             wkbit = contn->first_blk;
+            spin_lock(&ino_info->aio.wk_bitmap_lock);
             for_each_clear_bit_from(wkbit, ino_info->aio.work_bitmap, size)
                 set_bit(wkbit, ino_info->aio.work_bitmap);
             wkbit = contn->first_blk;
             for_each_set_bit_from(wkbit, ino_info->aio.wait_bitmap, contn->first_blk + contn->blknr);
             clear_bit(wkbit, ino_info->aio.wait_bitmap);
+            spin_unlock(&ino_info->aio.wk_bitmap_lock);
 
             INIT_WORK(&(contn->awork), nova_async_work);
             contn->isQue = queue_work(sb->s_dio_done_wq, &(contn->awork));
@@ -717,7 +722,7 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
     loff_t end = iocb->ki_pos; /* notice ,we should  not use iter->iov_offset,because iter->iov_offset is always  zero*/
     ssize_t ret = -EINVAL;
     unsigned long seg, nr_segs = iter->nr_segs;
-    unsigned long size;  // support maximum file size is 4G
+    unsigned long size,i_blocks;  // support maximum file size is 4G
 
     
     ino_info = container_of(inode, struct nova_inode_info, vfs_inode);
@@ -733,40 +738,50 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
     if (!is_sync_kiocb(iocb))
     {
         nova_info("async\n");
-        spin_lock(&inode->i_lock);
+        
       
         if (!sb->s_dio_done_wq)
             ret = sb_init_wq(sb);
+        spin_lock(&inode->i_lock);
 
         // fix me ,if ki_pos is very big ,we use too many mem for bitmap
+        if(iocb->ki_pos > inode->i_size){
+            nova_info("%s: iocb->ki_pos is too big !\n",__func__);
+            spin_unlock(&inode->i_lock);
+            return ret;
+        }
+            
         size =  end;
-       
+        i_blocks = inode->i_blocks;/*inode->i_blocks is  4kb*/
         if (size < inode->i_size)
             size = inode->i_size;
+        else{
+            if((iov_iter_rw(iter) == WRITE)){
+                i_blocks = DIV_ROUND_UP(size,PAGE_SIZE);
+            }
+        }
 
         //async bitmap init
-        unsigned long sub_blk_num = ((size - 1) >> sb->s_blocksize_bits) + 1;
-        nova_info("nova: sub_blk_num : %lu,inode.i_size : %lu,sb.s_blocksize_bits : %d , size %lu\n",sub_blk_num, inode->i_size, sb->s_blocksize, size);
         if (!ino_info->aio.wait_bitmap)
         {
-            ino_info->aio.wait_bitmap = kzalloc(BITS_TO_LONGS(sub_blk_num) * sizeof(long), GFP_KERNEL);
-            ino_info->aio.work_bitmap = kzalloc(BITS_TO_LONGS(sub_blk_num) * sizeof(long), GFP_KERNEL);
-            ino_info->aio.bitmap_size = BITS_TO_LONGS(sub_blk_num) * sizeof(long);
+            ino_info->aio.wait_bitmap = kzalloc(BITS_TO_LONGS(i_blocks) * sizeof(long), GFP_KERNEL);
+            ino_info->aio.work_bitmap = kzalloc(BITS_TO_LONGS(i_blocks) * sizeof(long), GFP_KERNEL);
+            ino_info->aio.bitmap_size = BITS_TO_LONGS(i_blocks) * sizeof(long);
             nova_info("alloc bitmap ino_info->aio.bitmap_size=%lu\n", ino_info->aio.bitmap_size);
         }
         else
         {
-            if (ino_info->aio.bitmap_size * BITS_PER_BYTE < sub_blk_num)
+            if (ino_info->aio.bitmap_size * BITS_PER_BYTE < i_blocks)
             {
-                unsigned long *tmp = kzalloc(BITS_TO_LONGS(sub_blk_num) * sizeof(long), GFP_KERNEL);
+                unsigned long *tmp = kzalloc(BITS_TO_LONGS(i_blocks) * sizeof(long), GFP_KERNEL);
                 memcpy((void *)ino_info->aio.wait_bitmap, (void *)tmp, ino_info->aio.bitmap_size);
                 kfree(ino_info->aio.wait_bitmap);
                 ino_info->aio.wait_bitmap = tmp;
-                tmp = kzalloc(BITS_TO_LONGS(sub_blk_num) * sizeof(long), GFP_KERNEL);
+                tmp = kzalloc(BITS_TO_LONGS(i_blocks) * sizeof(long), GFP_KERNEL);
                 memcpy((void *)ino_info->aio.work_bitmap, (void *)tmp, ino_info->aio.bitmap_size);
                 kfree(ino_info->aio.work_bitmap);
                 ino_info->aio.work_bitmap = tmp;
-                ino_info->aio.bitmap_size = BITS_TO_LONGS(sub_blk_num) * sizeof(long);
+                ino_info->aio.bitmap_size = BITS_TO_LONGS(i_blocks) * sizeof(long);
                 nova_info("realloc bitmap ino_info->aio.bitmap_size=%d\n", ino_info->aio.bitmap_size);
             }
         }
@@ -783,23 +798,42 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
         // async_work_struct(I/O node in file waitqueue) init
 
         unsigned long first_blk, nr, off, wtbit, wkbit;
-        unsigned long *temp_seg = kzalloc(sizeof(unsigned long),GFP_KERNEL);
+        unsigned long *temp_seg = (unsigned long*)kzalloc(sizeof(unsigned long),GFP_KERNEL);
         *temp_seg = nr_segs; 
         struct list_head *async_pos;
-        struct async_work_struct *contn;
+        struct async_work_struct *contn = NULL;
+        loff_t pos;
 
+        /*if file need to grow,we should add multiple write request(nr_segs>1)
+          to same conflict queue;because we need to ensure atomicity;
+        */
+        bool need_grow = false; 
 
         seg = 0;
         end = iocb->ki_pos;
+        size = inode->i_size;
         
         while (seg < nr_segs)
         {
             io_work = (struct async_work_struct *)kzalloc(sizeof(struct async_work_struct), GFP_KERNEL);
+            pos = end;
+            end += iv->iov_len;
+            if(end > size){
+                if((iov_iter_rw(iter) == WRITE))
+                    need_grow = true;
+                else{
+                    end = size;
+                    *temp_seg = seg+1;
+                    seg = nr_segs;
+                }
+            }
+            
+            
+            
             memcpy(&io_work->iter,iter,sizeof(struct iov_iter));
-
             io_work->my_iov.iov_base = iv->iov_base;
-            io_work->my_iov.iov_len = iv->iov_len;
-            io_work->ki_pos = end;
+            io_work->my_iov.iov_len = end-pos;
+            io_work->ki_pos = pos;
             io_work->a_iocb = iocb;
             io_work->nr_segs = temp_seg;
             io_work->tsk = current;
@@ -810,22 +844,51 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
             nova_info("nova  :init segs %d iov_base %p, iov_len %lu,ki_pos %llu\n", seg, io_work->my_iov.iov_base, io_work->my_iov.iov_len, io_work->ki_pos);
             
 
-            first_blk = ((end - 1) >> sb->s_blocksize_bits) + 1; // notice: if end =0;first_blk == 0?
-            off = end & (sb->s_blocksize - 1);
-            nr = DIV_ROUND_UP( iv->iov_len+ off, sb->s_blocksize);
+            first_blk = pos >> PAGE_SHIFT; // notice: if end =0;first_blk == 0?
+            off = pos & (PAGE_SIZE-1);
+            nr = DIV_ROUND_UP( iv->iov_len+ off, PAGE_SIZE);
             nova_info("iv->iov_len: %lu, sb->s_blocksize: %lu,nr :%lu\n",iv->iov_len,sb->s_blocksize,nr);
             io_work->first_blk = first_blk;
             io_work->blknr = nr;
             nova_info("nova : first_blk :%lu , off :%lu, end %lu, nr %lu,iter->count %lu\n", first_blk, off, end, nr,iter->count);
+
+
+            iv++;
+            seg++;
+                   
+            if(need_grow){
+                if(contn == NULL){
+                    contn = io_work;
+                    }
+                else{
+                    /*if file need to grow,we should add multiple write request(nr_segs>1)
+                      to same conflict queue;because we need to ensure atomicity;
+                    */
+                    list_add_tail(&io_work->aio_conflicq,&contn->aio_conflicq);
+                }
+
+
+                if(seg == nr_segs){
+                    first_blk = contn->first_blk;
+                    nr = DIV_ROUND_UP(end - contn->ki_pos,PAGE_SIZE);
+                    io_work = contn;
+                    io_work->blknr = nr;
+                    nova_info("%s : first_blk : %lu , nr : %lu , seg : %lu",__func__,io_work->first_blk,io_work->blknr,seg);
+                }
+                else
+                    continue;
+                
+            }
+
+
+
 
             wtbit = first_blk;
             wtbit = find_next_bit(ino_info->aio.wait_bitmap, first_blk + nr , wtbit);
             wkbit = first_blk;
             wkbit = find_next_bit(ino_info->aio.work_bitmap, first_blk + nr, wkbit);
 
-            end += iv->iov_len;
-            iv++;
-            seg++;
+            
             nova_info("seg : %d,end : %lu,wtbit:%lu, wkbit:%lu\n",seg,end,wtbit,wkbit);
             
 
@@ -834,8 +897,10 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
                 if (wtbit >= first_blk + nr)
                 { // 01
                     wtbit = first_blk;
+                    spin_lock(&ino_info->aio.wk_bitmap_lock);
                     for_each_clear_bit_from(wtbit, ino_info->aio.wait_bitmap, first_blk + nr)
                         set_bit(wtbit, ino_info->aio.wait_bitmap);
+                    spin_unlock(&ino_info->aio.wk_bitmap_lock);
                     async_pos = ino_info->aio.i_waitque.next;
                     while (async_pos != &ino_info->aio.i_waitque)
                     {
@@ -857,18 +922,24 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
                         f_blk = contn->first_blk;
                         if (f_blk + contn->blknr >= first_blk && f_blk <= first_blk + nr)
                         {
-                            struct async_work_struct *tmp_contn;
-                            tmp_contn = container_of(async_pos->next, struct async_work_struct, aio_waitq);
-                            if (tmp_contn->first_blk < first_blk + nr)
+                            if(async_pos->next != &ino_info->aio.i_waitque)
                             {
-                                async_pos = async_pos->next;
-                                list_del(&contn->aio_waitq);
-                                __list_splice(&contn->aio_conflicq, tmp_contn->aio_conflicq.prev, &tmp_contn->aio_conflicq);
-                                tmp_contn->blknr += (tmp_contn->first_blk - contn->first_blk);
-                                tmp_contn->first_blk = contn->first_blk;
+                                struct async_work_struct *tmp_contn;
+                                tmp_contn = container_of(async_pos->next, struct async_work_struct, aio_waitq);
+                                if (tmp_contn->first_blk < first_blk + nr)
+                                {
+                                    async_pos = async_pos->next;
+                                    list_del(&contn->aio_waitq);
+                                    __list_splice(&contn->aio_conflicq, tmp_contn->aio_conflicq.prev, &tmp_contn->aio_conflicq);
+                                    tmp_contn->blknr += (tmp_contn->first_blk - contn->first_blk);
+                                    tmp_contn->first_blk = contn->first_blk;
+                                }
+                                else
+                                    break;
                             }
                             else
-                                break;
+                                break;   
+                            
                         }
                         else
                         {
@@ -883,11 +954,14 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
                     async_pos = &contn->aio_conflicq;
                     list_add_tail(&io_work->aio_conflicq, async_pos);
                     t_bit = first_blk;
+                    spin_lock(&ino_info->aio.wk_bitmap_lock);
                     for_each_clear_bit_from(t_bit, ino_info->aio.wait_bitmap, first_blk + nr)
                         set_bit(t_bit, ino_info->aio.wait_bitmap);
+                    spin_unlock(&ino_info->aio.wk_bitmap_lock);
                     if (contn->first_blk > io_work->first_blk)
                         contn->first_blk = io_work->first_blk;
 
+                    /*you can draw to understanding*/
                     f_blk = contn->blknr + contn->first_blk - io_work->first_blk;
                     t_nr = io_work->first_blk + io_work->blknr - contn->first_blk;
                     if (f_blk > t_nr)
@@ -899,15 +973,19 @@ ssize_t nova_direct_IO(struct kiocb *iocb, struct iov_iter *iter)
             else
             { //00
                 wkbit = first_blk;
-                for_each_clear_bit_from(wkbit, ino_info->aio.work_bitmap, first_blk + nr)
+                spin_lock(&ino_info->aio.wk_bitmap_lock);
+                for_each_clear_bit_from(wkbit, ino_info->aio.work_bitmap, first_blk + nr);
                     set_bit(wkbit, ino_info->aio.work_bitmap);
+                spin_unlock(&ino_info->aio.wk_bitmap_lock);
                 INIT_WORK(&(io_work->awork), nova_async_work);
+
                 io_work->isQue = queue_work(sb->s_dio_done_wq, &(io_work->awork));
             }
             nova_info("nova_direct_io exit\n");
-            spin_unlock(&inode->i_lock); 
-        } /* async*/
-    }
+            
+        } 
+        spin_unlock(&inode->i_lock); 
+    }/* async*/
 
     return -EIOCBQUEUED;
 }
