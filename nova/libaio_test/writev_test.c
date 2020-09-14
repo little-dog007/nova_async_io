@@ -13,12 +13,14 @@
     *p[io_nums] = {&io[0].....&io[io_nums-1]};
 
 */
-#define io_nums 12
+#define io_nums 4
 
 int main()
 {
     io_context_t context;
     struct iocb io[io_nums], *p[io_nums];
+    struct iovec myiov_write[2],myiov_read[2];
+
     for(int i=0;i<io_nums;++i){
         p[i] = &io[i];
     }
@@ -36,6 +38,7 @@ int main()
     char *wbuf_4 =0,*rbuf_4 = 0;
     char *wbuf_5 = 0, *rbuf_5 = 0;
     char *wbuf_6 =0,*rbuf_6 = 0;
+    char *rbuf_all = 0;
 
     int wbuflen = 4096;
     int rbuflen = wbuflen+1;
@@ -48,10 +51,11 @@ int main()
     posix_memalign((void**)&rbuf_3, 4096, rbuflen);
     posix_memalign((void**)&wbuf_4, 4096, wbuflen);
     posix_memalign((void**)&rbuf_4, 4096, rbuflen);
-     posix_memalign((void**)&wbuf_5, 4096, wbuflen);
+    posix_memalign((void**)&wbuf_5, 4096, wbuflen);
     posix_memalign((void**)&rbuf_5, 4096, rbuflen);
     posix_memalign((void**)&wbuf_6, 4096, wbuflen);
     posix_memalign((void**)&rbuf_6, 4096, rbuflen);
+    posix_memalign((void**)&rbuf_all, 4096, wbuflen*2+1);
 
     memset(wbuf_1, 'a', wbuflen);
     memset(wbuf_2, 'b', wbuflen);
@@ -66,6 +70,7 @@ int main()
     memset(rbuf_4, 0, rbuflen);
     memset(rbuf_5, 0, rbuflen);
     memset(rbuf_6, 0, rbuflen);
+    memset(rbuf_all,0,wbuflen*2+1);
     /*this is a rule: io_context_t should init with 0*/
     memset(&context, 0, sizeof(io_context_t)); 
 
@@ -85,26 +90,23 @@ int main()
         return 0;
     }
 
-    // write
-    io_prep_pwrite(&io[0], fd, wbuf_1, wbuflen, 0);
-    io_prep_pread(&io[1], fd, rbuf_1, rbuflen-1, 0);
+    myiov_write[0].iov_len = wbuflen;
+    myiov_write[0].iov_base = wbuf_1;
+    myiov_write[1].iov_len = wbuflen;
+    myiov_write[1].iov_base = wbuf_2;
 
-    io_prep_pwrite(&io[2], fd, wbuf_2, wbuflen, 0);
-    io_prep_pread(&io[3], fd, rbuf_2, rbuflen-1, 0);
-
-    io_prep_pwrite(&io[4], fd, wbuf_3, wbuflen, 0);
-    io_prep_pread(&io[5], fd, rbuf_3, rbuflen-1, 0);
-
-    io_prep_pwrite(&io[6], fd, wbuf_4, wbuflen, 0);
-    io_prep_pread(&io[7], fd, rbuf_4, rbuflen-1, 0);
-
-    io_prep_pwrite(&io[8], fd, wbuf_5, wbuflen, 0);
-    io_prep_pread(&io[9], fd, rbuf_5, rbuflen-1, 0);
-
-    io_prep_pwrite(&io[10], fd, wbuf_6, wbuflen, 0);
-    io_prep_pread(&io[11], fd, rbuf_6, rbuflen-1, 0);
+    myiov_read[0].iov_len = wbuflen;
+    myiov_read[0].iov_base = rbuf_1;
+    myiov_read[1].iov_len = wbuflen;
+    myiov_read[1].iov_base = rbuf_2;
 
 
+   io_prep_pwritev(&io[0],fd,myiov_write,2,0);
+   io_prep_preadv(&io[1],fd,myiov_read,2,0);
+
+   io_prep_pwrite(&io[2], fd, wbuf_3, wbuflen, 0);
+   io_prep_pread(&io[3], fd, rbuf_all, wbuflen*2, 0);
+    
 
 
     if((ret = io_submit(context,io_nums,p)) != io_nums)
