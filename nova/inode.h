@@ -129,6 +129,7 @@ struct aio_struct{
 };
 
 struct async_work_struct{
+	int id; /*for test*/
 	loff_t	ki_pos;
 	struct iov_iter iter;
 	struct iovec my_iov; 
