@@ -1,6 +1,0 @@
-libaio-nova: (g=0): rw=randwrite, bs=(R) 4096B-4096B, (W) 4096B-4096B, (T) 4096B-4096B, ioengine=libaio, iodepth=8
-fio-3.6-37-g1222-dirty
-Starting 1 process
-libaio-nova: Laying out IO file (1 file / 0MiB)
-
-fio: terminating on signal 15
