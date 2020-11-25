@@ -435,6 +435,9 @@ static ssize_t nova_dax_write_iter(struct kiocb *iocb, struct iov_iter *from)
 	size_t count;
 	ssize_t ret;
 	INIT_TIMING(write_iter_time);
+	
+	/*for test*/
+	nova_info("%s\n",__func__);
 
 	/* for aio*/
 	if (!is_sync_kiocb(iocb))

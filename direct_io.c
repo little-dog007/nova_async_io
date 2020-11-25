@@ -167,7 +167,7 @@ ssize_t do_nova_inplace_file_write_async(struct file *filp, struct page **kaddr,
         /*now copy from user buf*/
 
         nova_memunlock_range(sb, kmem + offset, bytes);
-        page_offset = 0;
+        page_offset = buf&(PAGE_SIZE-1);
         remain_len = bytes;
 
         while (remain_len > 0)
@@ -181,7 +181,7 @@ ssize_t do_nova_inplace_file_write_async(struct file *filp, struct page **kaddr,
                so 0-2048 should be skiped;   buf &(PAGE_SIZE-1) = 2048;
              */
 
-            copied = copied_once - memcpy_to_pmem_nocache(kmem + offset, kaddr[kpage_i] + page_offset, copied_once);
+            copied = copied_once - memcpy_to_pmem_nocache(kmem + offset, (char *)kaddr[kpage_i] + page_offset, copied_once);
             all_copied += copied;
             remain_len -= copied;
             offset += copied;
@@ -981,6 +981,21 @@ int sb_init_wq(struct super_block *sb)
 }
 static void queue_wait_work(struct nova_inode_info *ino_info);
 
+static void kiocb_done(struct kiocb *kiocb,ssize_t ret){
+
+    /*libaio */
+    kiocb->ki_complete(kiocb, ret, 0);
+
+    /*io_uring*/
+   // struct io_kiocb *req = container_of(kiocb,struct io_kiocb,rw.kiocb);
+    // struct io_ring_ctx*ctx = req->ctx;
+    // unsigned long flags;
+    // spin_lock_irqsave(&ctx->completion_lock,flags);
+    
+    // spin_unlock_irqrestore(&ctx->completion_lock,flags);
+
+}
+
 void nova_async_work(struct work_struct *p_work)
 {
     struct async_work_struct *a_work = container_of(p_work, struct async_work_struct, awork);
@@ -1052,7 +1067,7 @@ void nova_async_work(struct work_struct *p_work)
         for (j = 0; j < pp->num; j++)
             set_page_dirty(pp->pages[j]);
     }
-
+    nova_info("%s\n",__func__);
 out:
     for (j = 0; j < pp->num; j++)
     {
@@ -1089,7 +1104,9 @@ quit:
         if (--(*(a_work->nr_segs)) == 0)
         {
             kfree(a_work->nr_segs);
-            a_work->a_iocb->ki_complete(a_work->a_iocb, ret, 0);
+
+            kiocb_done(a_work->a_iocb,ret);
+            //a_work->a_iocb->ki_complete(a_work->a_iocb, ret, 0);
         }
 
         spin_unlock(&ino_info->aio.wk_bitmap_lock);
@@ -1108,7 +1125,8 @@ quit:
         if (--(*(a_work->nr_segs)) == 0)
         {
             kfree(a_work->nr_segs);
-            a_work->a_iocb->ki_complete(a_work->a_iocb, ret, 0);
+            kiocb_done(a_work->a_iocb,ret);
+            //->a_iocb->ki_complete(a_work->a_iocb, ret, 0);
         }
         // nova_info("%s : clear work_bitmap first_blk : %lu,nr :%lu\n",__func__,first_blk,nr);
         for_each_set_bit_from(wkbit, ino_info->aio.work_bitmap, first_blk + nr)
